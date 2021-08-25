@@ -1,6 +1,8 @@
 const fs = require('fs')
 const pth = require('path')
 
+require('dotenv').config()
+
 const consoleColors = {
     FgBlack: 30,
     FgRed: 31,
@@ -34,7 +36,7 @@ const defaultTokenColors = () => ({
 /**
  * Reads and parses template
  * @param {string} path The path to the template
- * @param {{root?:string,useClasses?:boolean}} [options] Options that don't get used are passed down to parse
+ * @param {{parseStyle?:boolean,inlineJs?:boolean,jsErrorStyle?:string}} [options] Options that don't get used are passed down to parse
  * @returns {Promise<{text:()=>string,colorize:(tokenColors?:{htmlTag: number[],htmlContents: number[],htmlTagContents: number[],htmlAttributeName: number[],htmlAttributeEquals: number[],htmlAttributeContents: number[]})=>string,tokens:()=>{token:string,text:string}[]}>} The parsed template
  */
 const read = function(path, options) {
@@ -52,8 +54,7 @@ const read = function(path, options) {
             if (err) reject(err);
             else {
                 try {
-                    const p = parse(data, options)
-                    resolve(p)
+                    parse(data, options).then(resolve).catch(reject)
                 } catch (e) {
                     reject(e)
                 }
@@ -65,16 +66,89 @@ const read = function(path, options) {
 /**
  * 
  * @param {string} str The template text
- * @param {{useClasses?:boolean}} [options] Options for parsing
+ * @param {{parseStyle?:boolean,inlineJs?:boolean,jsErrorStyle?:string}} [options] Options for parsing
  * @returns {Promise<{text:()=>string,colorize:(tokenColors?:{htmlTag: number[],htmlContents: number[],htmlTagContents: number[],htmlAttributeName: number[],htmlAttributeEquals: number[],htmlAttributeContents: number[]})=>string,tokens:()=>{token:string,text:string}[]}>} The parsed template
  */
 const parse = function(str, options) {
     if (typeof(str) !== 'string') throw ('Str is a required field for function parse');
 
     if (!options) options = {}
-    if (typeof(options.useClasses) === 'undefined') options.useClasses = true
+    if (typeof(options.parseStyle) === 'undefined') options.parseStyle = true
+    if (typeof(options.inlineJs) === 'undefined') options.inlineJs = true
+    if (typeof(options.jsErrorStyle) === 'undefined') options.jsErrorStyle = 'color:red;'
 
     return new Promise((resolve, reject) => {
+        const inlineJs = () => {
+            const runJs = (code) => {
+                const escapeHtml = (unsafe) => {
+                    if (!unsafe) return ''
+                    return unsafe
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;")
+                        .replace(/\n/g, '<br>')
+                }
+
+                try {
+                    let ret = eval(code);
+                    if (ret) {
+                        return escapeHtml(ret.toString())
+                    } else {
+                        return ''
+                    }
+                } catch (e) {
+                    return '<span class="jserror">' + escapeHtml(e.stack || e.toString()) + '</span>'
+                }
+            }
+
+            let res = ''
+            let jsBuffer = ''
+            let jsTokenId = -1
+            let position = 0
+
+            res += '<style>.jserror {' + options.jsErrorStyle + '}</style>'
+
+            while (position < str.length) {
+                let c = str[position]
+
+                switch (c) {
+                    case '{':
+                        if (jsTokenId === -1) jsTokenId = 0
+                        else if (jsTokenId === 0) jsTokenId = 1
+                        break
+                    case '}':
+                        if (jsTokenId === 1) jsTokenId = 2
+                        else if (jsTokenId === 2) {
+                            jsTokenId = -1
+                            res += runJs(jsBuffer)
+                            jsBuffer = ''
+                        } else if (jsTokenId === 0) {
+                            jsTokenId = -1
+                            res += '{' + jsBuffer + '}'
+                            jsBuffer = ''
+                        }
+                        break
+                    default:
+                        if (jsTokenId === -1) {
+                            res += c
+                        } else {
+                            jsBuffer += c
+                        }
+                        break
+                }
+
+                position++
+            }
+
+            str = res
+        }
+
+        if (options.inlineJs) {
+            inlineJs()
+        }
+
         let tokens = []
         const parseHtml = () => {
             let position = 0
@@ -207,7 +281,7 @@ const parse = function(str, options) {
 
         parseHtml()
 
-        const parseClasses = () => {
+        const parseStyles = () => {
             let inStyle = false
             let styleTokens = []
             let styleText = ''
@@ -236,8 +310,8 @@ const parse = function(str, options) {
                 return s
             }
 
-            let elements = {}
-            let classes = {}
+            let elements = []
+            let classes = []
             let position = 0
             let currentTokenId = null
             let currentName = '';
@@ -258,14 +332,14 @@ const parse = function(str, options) {
                     case '}':
                         if (inToken) {
                             inToken = false
-                            let t = replaceAll(replaceAll(replaceAll(replaceAll(currentToken, '\r', ''), '\n', ''), '\t', ''), ' ', '')
+                            let t = replaceAll(replaceAll(replaceAll(currentToken, '\r', ''), '\n', ''), '\t', '').replace(/\s*;\s*/g, ';').trimStart()
 
                             switch (currentTokenId) {
                                 case 'class':
-                                    classes[currentName] = t
+                                    classes.push([currentName, t])
                                     break
                                 case 'element':
-                                    elements[currentName] = t
+                                    elements.push([currentName, t])
                             }
 
                             currentName = ''
@@ -285,6 +359,21 @@ const parse = function(str, options) {
                 position++
             }
 
+            const wildTest = (wildcard, str) => {
+                let w = wildcard.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+                return new RegExp(`^${w.replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i').test(str);
+            }
+
+            const searchArray = (array, search, valueIndex) => {
+                let res = []
+                for (var i = 0; i < array.length; i++) {
+                    if (wildTest(array[i][valueIndex], search)) {
+                        res.push(array[i])
+                    }
+                }
+                return res
+            }
+
             let currentTag = null
             let inClassAttribute = false
             let classTokens = []
@@ -295,7 +384,8 @@ const parse = function(str, options) {
                 let curToken = tokens[i];
                 if (curToken.token == 'htmlTag') {
                     currentTag = curToken
-                    if (elements[curToken.text.trim().toLowerCase()]) matchedElements.push(curToken)
+                    let sr = searchArray(elements, curToken.text.trim().toLowerCase(), 0)
+                    for (let s of sr) matchedElements.push([s, curToken])
                 } else if (curToken.token == 'closingHtmlTag') currentTag = null
                 else if (curToken.token == 'htmlAttributeName' && curToken.text.trim().toLowerCase() == 'class') {
                     inClassAttribute = true
@@ -315,22 +405,55 @@ const parse = function(str, options) {
                 return !classTokens.includes(v)
             })
 
-            for (var i = 0; i < matchedElements.length; i++) {
-                let ind = tokens.indexOf(matchedElements[i])
-                let style = elements[matchedElements[i].text.trim().toLowerCase()]
-                tokens.splice(ind + 1, 0, { token: 'htmlAttributeName', text: 'style' }, { token: 'htmlAttributeEquals', text: '=' }, { token: 'htmlAttributeContents', text: style }, { token: 'htmlTagContents', text: ' ' })
+            const matchStyleAttribute = (startIndex) => {
+                let existingStyle = null
+                for (var j = startIndex + 1; j < tokens.length; j++) {
+                    let curToken = tokens[j]
+                    if (curToken.token == 'htmlTag' || curToken.token == 'htmlContents') break;
+                    if (curToken.token == 'htmlAttributeName' && curToken.text.trim().toLowerCase() == 'style') {
+                        existingStyle = curToken
+                    } else if (curToken.token == 'htmlAttributeContents' && existingStyle != null) {
+                        existingStyle = curToken
+                        break
+                    }
+                }
+                return existingStyle
             }
 
             for (var i = 0; i < elementClasses.length; i++) {
                 let ind = tokens.indexOf(elementClasses[i].tag)
                 let classesText = []
-                elementClasses[i].classes.forEach((v) => { classesText.push(classes[v]) })
-                tokens.splice(ind + 1, 0, { token: 'htmlAttributeName', text: 'style' }, { token: 'htmlAttributeEquals', text: '=' }, { token: 'htmlAttributeContents', text: classesText.join('') }, { token: 'htmlTagContents', text: ' ' })
+
+                elementClasses[i].classes.forEach((v) => {
+                    let sr = searchArray(classes, v, 0);
+                    sr.forEach((o) => {
+                        classesText.push(o[1])
+                    })
+                })
+
+                let stl = matchStyleAttribute(ind)
+                if (stl != null) {
+                    stl.text = classesText.join('') + stl.text
+                } else {
+                    tokens.splice(ind + 1, 0, { token: 'htmlAttributeName', text: 'style' }, { token: 'htmlAttributeEquals', text: '=' }, { token: 'htmlAttributeContents', text: classesText.join('') }, { token: 'htmlTagContents', text: ' ' })
+                }
+            }
+
+            for (var i = 0; i < matchedElements.length; i++) {
+                let ind = tokens.indexOf(matchedElements[i][1])
+                let style = matchedElements[i][0][1]
+
+                let stl = matchStyleAttribute(ind)
+                if (stl != null) {
+                    stl.text = style + stl.text
+                } else {
+                    tokens.splice(ind + 1, 0, { token: 'htmlAttributeName', text: 'style' }, { token: 'htmlAttributeEquals', text: '=' }, { token: 'htmlAttributeContents', text: style }, { token: 'htmlTagContents', text: ' ' })
+                }
             }
         }
 
-        if (options.useClasses) {
-            parseClasses()
+        if (options.parseStyle) {
+            parseStyles()
         }
 
         const stringifyTokens = function(p) {
@@ -345,7 +468,7 @@ const parse = function(str, options) {
                 switch (curToken.token) {
                     case 'htmlTag':
                     case 'closingHtmlTag':
-                        res += (curToken.token == 'htmlTag' ? '<' : '</') + p(curToken);
+                        res += (curToken.token == 'htmlTag' ? '<' : '</') + p(curToken) + ' ';
                         if (nextToken.token == 'htmlContents') {
                             res += '>'
                         }

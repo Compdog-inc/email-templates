@@ -1,7 +1,91 @@
 <style>
+    body {
+        background-color: #e2e498;
+        color: black;
+    }
+    
+    .main {
+        background-color: #e2e498;
+        color: black;
+        font-family: Arial, Helvetica, sans-serif;
+    }
+    
+    .container {
+        width: calc(100% - 500px);
+        min-width: 500px;
+        min-height: 1500px;
+        position: absolute;
+        left: 50%;
+        transform: translate(-50%, 0);
+        background-color: #f0f1bf;
+    }
+    
+    .header {
+        height: 150px;
+    }
+    
+    .title {
+        position: relative;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 50px;
+        text-align: center;
+        font-weight: bold;
+    }
+    
+    .body {
+        font-size: 20px;
+        text-align: center;
+    }
+    
+    .footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 100px;
+        background-color: #404040;
+        color: #a3a3a3;
+        padding: 30px;
+        font-size: 12px;
+    }
+    
+    .footer-text {
+        margin-bottom: 15px;
+    }
+    
     .button {
-        background-color: red;
+        display: inline-block;
+        text-decoration: none;
         color: white;
+        background-color: #158ed4;
+        padding: 20px 50px;
+        border-radius: 10px;
     }
 </style>
-<a href="https://www.google.com" class="button">Google<div class="button">meow</div></a>
+
+<body>
+    <div class="main">
+        <div class="container">
+            <div class="header">
+                <div class="title">{{global.contentText.title}}</div>
+            </div>
+            <div class="body">
+                <p>
+                    Hello! Today is {{new Date()}}.
+                </p>
+                <p>
+                    <b>Join now to get $999!!!</b>
+                    <div style="margin-bottom: 10px;"></div>
+                    <a href="{{global.contentText.joinSubscriptionUrl}}" class="button">Join</a>
+                </p>
+            </div>
+            <div class="footer">
+                <div class="footer-text">This email was sent from an unmonitored mailbox.</div>
+                <div class="footer-text">{{global.contentText.signature}}</div>
+                <a href="{{global.contentText.companyUrl}}"><img class="footer-logo" src="{{global.contentText.footerLogo}}"></a>
+            </div>
+        </div>
+    </div>
+</body>
